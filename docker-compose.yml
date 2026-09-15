@@ -1,0 +1,51 @@
+version: "3.8"
+
+services:
+  # FastAPI — internal only, not exposed to Traefik.
+  # All public traffic reaches it via Next.js rewrites (/api/* and /uploads/*).
+  deployment:
+    build: .
+    container_name: deployment-service
+    env_file:
+      - .env
+    volumes:
+      - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - traefik
+
+  # Next.js Frontend — the single public entry point.
+  # Rewrites /api/* and /uploads/* to the deployment service internally.
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: https://student.ictbangladesh.bd
+        API_INTERNAL_URL: http://deployment:8000
+    container_name: frontend-service
+    restart: unless-stopped
+    environment:
+      # Runtime env for SSR fetches (server.ts uses this over NEXT_PUBLIC_API_URL)
+      - API_URL=http://deployment:8000
+    networks:
+      - traefik
+    labels:
+      - "traefik.enable=true"
+
+      - "traefik.http.routers.frontend-http.rule=Host(`student.ictbangladesh.bd`)"
+      - "traefik.http.routers.frontend-http.entrypoints=web"
+      - "traefik.http.routers.frontend-http.middlewares=redirect-to-https@file"
+
+      - "traefik.http.routers.frontend-https.rule=Host(`student.ictbangladesh.bd`)"
+      - "traefik.http.routers.frontend-https.entrypoints=websecure"
+      - "traefik.http.routers.frontend-https.tls.certresolver=letsencrypt"
+      - "traefik.http.services.frontend-service.loadbalancer.server.port=3000"
+
+networks:
+  traefik:
+    external: true
